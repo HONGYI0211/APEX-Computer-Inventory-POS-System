@@ -95,7 +95,7 @@ s_disc      db "  Discount (",0
 s_disc2     db "%)      : -",0
 s_tax       db "  Tax (6%)          : ",0
 s_total     db "  TOTAL             : ",0
-s_pay       db 10,"  Cash received in whole RM (0 = cancel): ",0
+s_pay       db 10,"  Cash received in RM, e.g. 2861.04 (0 = cancel): ",0
 s_short     db 27,"[31m  Insufficient payment.",27,"[0m",10,0
 s_change    db "  Change            : ",0
 s_thanks    db 27,"[32m  Payment complete. Thank you!",27,"[0m",10,0
@@ -426,12 +426,11 @@ checkout:
 
 .pay:
     PUTS s_pay
-    call read_int
-    cmp  eax, 1000000
-    ja   .badpay                    ; also catches -1
+    call read_money                 ; eax = cents, or -1 if invalid
+    cmp  eax, -1
+    je   .badpay
     test eax, eax
     jz   .cancel
-    imul eax, eax, 100              ; RM -> cents
     cmp  eax, [rc_total]
     jb   .short
     sub  eax, [rc_total]            ; change due
@@ -637,6 +636,67 @@ read_int:
 .bad:
     mov  eax, -1
 .ret:
+    pop  esi
+    pop  ecx
+    pop  ebx
+    ret
+
+; ---- read_money: eax = cents parsed from "RM" or "RM.sen", or -1 if invalid --
+read_money:
+    push ebx
+    push ecx
+    push esi
+    push edi
+    call read_line
+    mov  esi, inbuf
+    xor  eax, eax
+    xor  ecx, ecx                   ; digit counter
+.rm:
+    movzx ebx, byte [esi]
+    sub  bl, '0'
+    cmp  bl, 9
+    ja   .rmend
+    imul eax, eax, 10
+    add  eax, ebx
+    inc  ecx
+    inc  esi
+    cmp  ecx, 7
+    jbe  .rm
+    jmp  .bad                       ; more than 7 integer digits
+.rmend:
+    test ecx, ecx
+    jz   .bad
+    imul eax, eax, 100              ; ringgit -> cents
+    cmp  byte [esi], '.'
+    jne  .ret                       ; no decimal part
+    inc  esi
+    xor  ecx, ecx
+    xor  edi, edi                   ; sen
+.fr:
+    movzx ebx, byte [esi]
+    sub  bl, '0'
+    cmp  bl, 9
+    ja   .frend
+    cmp  ecx, 2
+    jae  .bad                       ; more than 2 decimals
+    imul edi, edi, 10
+    add  edi, ebx
+    inc  ecx
+    inc  esi
+    jmp  .fr
+.frend:
+    test ecx, ecx
+    jz   .bad                       ; "5." is not valid
+    cmp  ecx, 1
+    jne  .addsen
+    imul edi, edi, 10               ; "5.5" means 50 sen
+.addsen:
+    add  eax, edi
+    jmp  .ret
+.bad:
+    mov  eax, -1
+.ret:
+    pop  edi
     pop  esi
     pop  ecx
     pop  ebx
