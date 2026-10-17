@@ -1,0 +1,8 @@
+# Claude Code
+.claude/
+settings.local.json
+
+# NASM build output
+*.o
+*.lst
+apex_pos
