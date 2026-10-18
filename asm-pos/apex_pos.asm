@@ -8,10 +8,21 @@
 ;
 ;  Money is stored as integer cents (RM 29.99 = 2999) so that only integer
 ;  arithmetic (ADD, SUB, MUL, IMUL, DIV) is needed.
+;
+;  REGISTER HABITS USED IN THIS FILE
+;  ---------------------------------
+;  eax = working value / result of a calculation or of a subroutine
+;  ebx = loop counter / product index in loops
+;  ecx = counter, field width or temporary
+;  edx = remainder after DIV, high half after MUL (so it is often cleared)
+;  esi = source pointer or product index,  edi = destination pointer / quantity
+;  Every printing/reading subroutine saves and restores the registers it uses
+;  (pusha/popa or push/pop), so the caller's values survive a CALL.
 ; ============================================================================
 
-bits 32
+bits 32                             ; generate 32-bit machine code
 
+; ---- constants (equ = a name for a number; uses no memory) ----------------
 DEFAULTITEMS equ 5      ; products that ship with the system
 MAXITEMS equ 12         ; capacity of the product table
 NAMELEN  equ 12         ; fixed width of a product name field
@@ -27,39 +38,47 @@ SYS_EXIT  equ 1
 SYS_READ  equ 3
 SYS_WRITE equ 4
 
+; ---- macros (text replaced by NASM before assembling) ---------------------
 %macro NAME 1                       ; product name padded to NAMELEN bytes
-    %strlen _l %1
-    db %1
-    times NAMELEN-_l db ' '
-%endmacro
+    %strlen _l %1                   ; _l = length of the text given
+    db %1                           ; store the text
+    times NAMELEN-_l db ' '         ; fill the rest with spaces so every name
+%endmacro                           ; takes exactly NAMELEN bytes
 
 %macro PUTS 1                       ; print a zero-terminated string
-    push esi
-    mov  esi, %1
-    call print_str
+    push esi                        ; keep the caller's esi
+    mov  esi, %1                    ; esi = address of the string
+    call print_str                  ; print_str writes it to the screen
     pop  esi
 %endmacro
 
 ; ----------------------------------------------------------------------------
-section .data
+section .data                       ; initialised data (can be changed at run time)
 ; ----------------------------------------------------------------------------
-pin         db "1234"
+pin         db "1234"              ; the staff PIN (compared byte by byte)
 
-; product table (parallel arrays); the first DEFAULTITEMS entries are the
-; built-in products, the remaining slots are filled by "Add new product"
-item_count  dd DEFAULTITEMS
+; Product table = "parallel arrays": product number i (counting from 0) has
+;   name  at item_names + i*NAMELEN   (text, NAMELEN bytes)
+;   price at item_price + i*4         (4-byte number, in cents)
+;   stock at item_stock + i*4         (4-byte number)
+; The first DEFAULTITEMS entries are the built-in products, the remaining
+; slots are empty and are filled by "Add new product".
+item_count  dd DEFAULTITEMS         ; how many products exist right now
 item_names:
     NAME "Laptop"
     NAME "Monitor"
     NAME "Keyboard"
     NAME "Mouse"
     NAME "USB Flash"
-    times (MAXITEMS-DEFAULTITEMS)*NAMELEN db ' '
+    times (MAXITEMS-DEFAULTITEMS)*NAMELEN db ' '    ; empty name slots
 item_price  dd 299900, 59900, 8900, 4500, 2500      ; in cents
-    times MAXITEMS-DEFAULTITEMS dd 0
+    times MAXITEMS-DEFAULTITEMS dd 0                ; empty price slots
 item_stock  dd 5, 8, 20, 30, 50                     ; modified at run time
-    times MAXITEMS-DEFAULTITEMS dd 0
+    times MAXITEMS-DEFAULTITEMS dd 0                ; empty stock slots
 
+; Text messages.  Each ends with 0 (end of string) and uses:
+;   10      = new line
+;   27,"[..m" = ANSI colour code (31 red, 32 green, 33 yellow, 0 = normal)
 s_banner    db 27,"[1;36m",10
             db "  ======================================================",10
             db "      APEX COMPUTER SHOP  -  POS & INVENTORY SYSTEM",10
@@ -80,21 +99,23 @@ s_menu      db 10,27,"[1m  ---------------------- MAIN MENU --------------------
 s_invalid   db 27,"[31m  Invalid input, try again.",27,"[0m",10,0
 s_bye       db 10,"  Session closed. Goodbye!",10,0
 
+; Inventory table pieces (the table is yellow: ESC[33m ... ESC[0m)
 s_reset     db 27,"[0m",0
 s_invhdr    db 10,27,"[33m"
             db "  +-----+--------------+--------------+-------+--------------+",10
             db "  | No. | Product      |        Price | Stock | Status       |",10
 s_tsep      db "  +-----+--------------+--------------+-------+--------------+",10,0
-s_instock   db "In Stock    ",0
-s_lowstock  db "Low Stock   ",0
+s_instock   db "In Stock    ",0     ; the three status texts have equal length
+s_lowstock  db "Low Stock   ",0     ; (12 characters) so the column stays aligned
 s_outstock  db "Out of Stock",0
 s_sp2       db "  ",0
 s_space     db " ",0
-s_rowb      db "  | ",0
+s_rowb      db "  | ",0             ; table cell separators
 s_rowc      db " | ",0
 s_rowend    db " |",0
 s_nl        db 10,0
 
+; New sale messages
 s_selitem   db "  Item no. (0 = checkout, ",0
 s_selitem2  db " = back to menu): ",0
 s_qty       db "  Quantity: ",0
@@ -104,6 +125,7 @@ s_toobig    db 27,"[31m  Sale value limit reached - checkout first.",27,"[0m",10
 s_back      db "  Back to main menu (cart cleared, stock restored).",10,0
 s_cartfull  db "  Cart is full - proceeding to checkout.",10,0
 
+; Receipt pieces (every receipt line is 60 characters wide)
 s_rcpt      db 10,"  ======================== RECEIPT =========================",10,0
 s_x         db " x ",0
 s_at        db " @ ",0
@@ -121,6 +143,7 @@ s_change    db "  Change                                  : ",0
 s_thanks    db 27,"[32m  Payment complete. Thank you!",27,"[0m",10,0
 s_cancel    db "  Sale cancelled - stock restored.",10,0
 
+; Add product / restock messages
 s_apname    db "  New product name (max 12 characters, empty = cancel): ",0
 s_approce   db "  Price in RM, e.g. 49.90 (0 = cancel): ",0
 s_apstock   db "  Initial stock (0-999): ",0
@@ -134,6 +157,7 @@ s_rsqty     db "  Units to add: ",0
 s_rsfull    db 27,"[31m  Stock would exceed the limit of 999.",27,"[0m",10,0
 s_rsok      db 27,"[32m  Stock updated.",27,"[0m",10,0
 
+; Sales report pieces
 s_rephdr    db 10,"  ================ SALES REPORT ================",10
             db 27,"[33m"
             db "  +--------------+------------+----------------+",10
@@ -150,65 +174,71 @@ s_dot       db ".",0
 s_zero      db "0",0
 
 ; ----------------------------------------------------------------------------
-section .bss
+section .bss                        ; reserved memory, starts as all zeros
 ; ----------------------------------------------------------------------------
-inbuf       resb 64
-numbuf      resb 12
-moneybuf    resb 20
+;  resb = reserve bytes, resd = reserve 4-byte numbers ("double words")
+inbuf       resb 64                 ; the line typed by the user
+numbuf      resb 12                 ; scratch space for converting numbers to text
+moneybuf    resb 20                 ; scratch space for "RM d.dd" text
 cart_item   resd MAXCART            ; product index per cart line
 cart_qty    resd MAXCART            ; quantity per cart line
-cart_count  resd 1
+cart_count  resd 1                  ; how many cart lines are used
 cart_total  resd 1                  ; value of the cart in cents
 sold        resd MAXITEMS           ; units sold per product
 total_sales resd 1                  ; cents
-txn_count   resd 1
-rc_sub      resd 1
-rc_pct      resd 1
-rc_disc     resd 1
-rc_tax      resd 1
-rc_total    resd 1
+txn_count   resd 1                  ; number of completed sales
+rc_sub      resd 1                  ; receipt: subtotal
+rc_pct      resd 1                  ; receipt: discount percent
+rc_disc     resd 1                  ; receipt: discount amount
+rc_tax      resd 1                  ; receipt: tax amount
+rc_total    resd 1                  ; receipt: final total
 
 ; ----------------------------------------------------------------------------
-section .text
-global _start
+section .text                       ; the program code
+global _start                       ; _start is where the program begins
 ; ----------------------------------------------------------------------------
+; NOTE: a label starting with "." (like .try) is a LOCAL label; it belongs to
+; the nearest global label above it, so different routines can reuse names
+; such as .bad or .row.
 
 _start:
     PUTS s_banner
 
 ; ---- login: 3 attempts (loop + conditional jumps) --------------------------
-    mov  ebp, 3
+    mov  ebp, 3                     ; ebp = attempts left
 .try:
     PUTS s_pin
-    call read_line
-    mov  esi, inbuf
-    mov  edi, pin
-    mov  ecx, 4
+    call read_line                  ; the typed text is now in inbuf
+    mov  esi, inbuf                 ; esi -> what the user typed
+    mov  edi, pin                   ; edi -> the correct PIN
+    mov  ecx, 4                     ; a PIN has 4 digits
 .cmp:                               ; compare 4 PIN digits one by one
     mov  al, [esi]
     cmp  al, [edi]
-    jne  .fail
+    jne  .fail                      ; one digit differs -> wrong PIN
     inc  esi
     inc  edi
-    loop .cmp
+    loop .cmp                       ; ecx = ecx-1, repeat while ecx <> 0
     cmp  byte [esi], 10             ; PIN must end exactly here
     jne  .fail
     PUTS s_welcome
     jmp  menu
 .fail:
-    dec  ebp
-    jz   .locked
+    dec  ebp                        ; one attempt used
+    jz   .locked                    ; no attempts left
     PUTS s_wrong
     jmp  .try
 .locked:
     PUTS s_locked
-    mov  ebx, 1
+    mov  ebx, 1                     ; exit status 1 = error
     jmp  exit_code
 
 ; ---- main menu -------------------------------------------------------------
+; Reads a number and jumps to the routine for that choice.  Each routine ends
+; with "jmp menu", so the menu repeats until the user chooses 6 (Exit).
 menu:
     PUTS s_menu
-    call read_int
+    call read_int                   ; eax = number typed, or -1 if invalid
     cmp  eax, 1
     je   do_sale
     cmp  eax, 2
@@ -221,23 +251,28 @@ menu:
     je   do_report
     cmp  eax, 6
     je   do_exit
-    PUTS s_invalid
+    PUTS s_invalid                  ; none matched
     jmp  menu
 
+; ---- option 2: view inventory ----------------------------------------------
 do_inventory:
     call show_inventory
     jmp  menu
 
+; ---- option 6: exit --------------------------------------------------------
 do_exit:
     PUTS s_bye
-    xor  ebx, ebx
+    xor  ebx, ebx                   ; xor reg,reg sets it to 0 -> status 0 = OK
 exit_code:                          ; ebx = exit status
     mov  eax, SYS_EXIT
-    int  0x80
+    int  0x80                       ; the kernel ends the program
 
 ; ---- option 1: new sale ----------------------------------------------------
+; The user builds a cart (a list of "lines": product + quantity).  Stock is
+; taken out of the shop as soon as a line is added ("reserved") and given back
+; if the sale is cancelled.  When the user enters 0, checkout runs.
 do_sale:
-    mov  dword [cart_count], 0
+    mov  dword [cart_count], 0      ; start with an empty cart
     mov  dword [cart_total], 0
     call show_inventory
 .item:
@@ -257,21 +292,21 @@ do_sale:
     je   .back                      ; item_count+1 -> abandon cart, back to menu
     jmp  .bad                       ; anything else, including -1
 .picked:
-    dec  eax
+    dec  eax                        ; item number 1.. -> table index 0..
     mov  esi, eax                   ; esi = product index
     PUTS s_qty
     call read_int
     test eax, eax
-    jle  .bad
+    jle  .bad                       ; quantity must be at least 1
     mov  edi, eax                   ; edi = quantity
-    cmp  edi, [item_stock+esi*4]
-    ja   .nostock
+    cmp  edi, [item_stock+esi*4]    ; stock of product esi (4 bytes per entry)
+    ja   .nostock                   ; asked for more than we have
     mov  eax, [item_price+esi*4]    ; keep the cart value inside 32 bits
-    mul  edi
+    mul  edi                        ; edx:eax = price * quantity
     test edx, edx
-    jnz  .toobig
+    jnz  .toobig                    ; result does not fit in 32 bits
     add  eax, [cart_total]
-    jc   .toobig
+    jc   .toobig                    ; carry flag set = the addition overflowed
     cmp  eax, CARTLIMIT
     ja   .toobig
     mov  [cart_total], eax
@@ -283,7 +318,7 @@ do_sale:
     sub  [item_stock+esi*4], edi    ; reserve stock
     PUTS s_added
     cmp  ecx, MAXCART
-    jb   .item
+    jb   .item                      ; cart not full: ask for the next item
     PUTS s_cartfull
     jmp  .checkout
 .nostock:
@@ -296,13 +331,13 @@ do_sale:
     PUTS s_invalid
     jmp  .item
 .back:                              ; give reserved stock back
-    xor  ebx, ebx
-.unreserve:
+    xor  ebx, ebx                   ; ebx = cart line number, starts at 0
+.unreserve:                         ; loop over all cart lines
     cmp  ebx, [cart_count]
     jae  .backdone
-    mov  esi, [cart_item+ebx*4]
-    mov  eax, [cart_qty+ebx*4]
-    add  [item_stock+esi*4], eax
+    mov  esi, [cart_item+ebx*4]     ; which product
+    mov  eax, [cart_qty+ebx*4]      ; how many were reserved
+    add  [item_stock+esi*4], eax    ; put them back on the shelf
     inc  ebx
     jmp  .unreserve
 .backdone:
@@ -311,27 +346,28 @@ do_sale:
     jmp  menu
 .checkout:
     cmp  dword [cart_count], 0
-    je   menu
+    je   menu                       ; nothing in the cart, nothing to pay
     call checkout
     jmp  menu
 
 ; ---- option 3: restock -----------------------------------------------------
+; Adds units to an existing product (stock may not exceed MAXSTOCK).
 do_restock:
     call show_inventory
 .again:
     PUTS s_rsitem
     call read_int
     test eax, eax
-    jz   menu
+    jz   menu                       ; 0 = back to the main menu
     cmp  eax, [item_count]
-    ja   .bad
+    ja   .bad                       ; not a valid product number
     dec  eax
-    mov  esi, eax
+    mov  esi, eax                   ; esi = product index
     PUTS s_rsqty
     call read_int
     test eax, eax
     jle  .bad
-    add  eax, [item_stock+esi*4]
+    add  eax, [item_stock+esi*4]    ; eax = new stock level
     cmp  eax, MAXSTOCK
     ja   .full
     mov  [item_stock+esi*4], eax
@@ -345,9 +381,11 @@ do_restock:
     jmp  .again
 
 ; ---- option 4: add new product ---------------------------------------------
+; Asks for a name, a price and an initial stock and stores them in the next
+; free slot of the product table.  The default products are never touched.
 do_addproduct:
     cmp  dword [item_count], MAXITEMS
-    jb   .name
+    jb   .name                      ; there is still a free slot
     PUTS s_apfull
     jmp  menu
 .name:
@@ -356,18 +394,18 @@ do_addproduct:
     mov  esi, inbuf
     xor  ecx, ecx                   ; ecx = name length
 .scan:                              ; accept 1..NAMELEN printable characters
-    mov  al, [esi+ecx]
+    mov  al, [esi+ecx]              ; next typed character
     cmp  al, 10
-    je   .scanned
+    je   .scanned                   ; Enter (end of line)
     cmp  al, 13
     je   .scanned
     cmp  al, 32
-    jb   .badname
+    jb   .badname                   ; below space = control character
     cmp  al, 126
-    ja   .badname
+    ja   .badname                   ; above '~' = not printable
     inc  ecx
     cmp  ecx, NAMELEN
-    jbe  .scan
+    jbe  .scan                      ; still within the allowed length
 .badname:
     PUTS s_badname
     jmp  .name
@@ -376,16 +414,16 @@ do_addproduct:
     jz   menu                       ; empty name = cancel
     mov  edx, ecx                   ; copy the name into the next free slot and
     mov  eax, [item_count]          ; pad it with spaces up to NAMELEN
-    imul eax, eax, NAMELEN
-    lea  edi, [item_names+eax]
-    rep  movsb
+    imul eax, eax, NAMELEN          ; offset = product number * NAMELEN
+    lea  edi, [item_names+eax]      ; edi = address of the free name slot
+    rep  movsb                      ; copy ecx bytes from [esi] to [edi]
     mov  ecx, NAMELEN
-    sub  ecx, edx
+    sub  ecx, edx                   ; ecx = how many spaces are still needed
     mov  al, ' '
-    rep  stosb
+    rep  stosb                      ; store that many spaces at [edi]
 .price:
     PUTS s_approce
-    call read_money
+    call read_money                 ; eax = price in cents, or -1 if invalid
     cmp  eax, -1
     je   .badprice
     test eax, eax
@@ -399,11 +437,11 @@ do_addproduct:
     cmp  eax, MAXSTOCK
     ja   .badstock                  ; also catches -1
     mov  ecx, [item_count]          ; commit the new product
-    mov  [item_price+ecx*4], edi
+    mov  [item_price+ecx*4], edi    ; ecx = index of the new product
     mov  [item_stock+ecx*4], eax
     mov  dword [sold+ecx*4], 0
     inc  ecx
-    mov  [item_count], ecx
+    mov  [item_count], ecx          ; the table now has one more product
     PUTS s_apdone
     call show_inventory
     jmp  menu
@@ -415,30 +453,31 @@ do_addproduct:
     jmp  .stock
 
 ; ---- option 5: sales report ------------------------------------------------
+; Prints one row per product (units sold and revenue), then the totals.
 do_report:
     PUTS s_rephdr
     xor  ebx, ebx                   ; product index
     xor  ebp, ebp                   ; total units
     xor  edi, edi                   ; best seller index
     mov  dword [rc_sub], 0          ; highest units seen so far
-.row:
+.row:                               ; loop over all products
     cmp  ebx, [item_count]
     jae  .summary
     PUTS s_rowb
     mov  eax, ebx
     imul eax, eax, NAMELEN
-    lea  ecx, [item_names+eax]
-    mov  edx, NAMELEN
+    lea  ecx, [item_names+eax]      ; ecx = address of this product's name
+    mov  edx, NAMELEN               ; edx = number of characters to print
     call write_buf
     PUTS s_rowc
     mov  eax, [sold+ebx*4]
-    add  ebp, eax
+    add  ebp, eax                   ; add to the total units
     cmp  eax, [rc_sub]              ; new best seller?
     jbe  .notbest
-    mov  [rc_sub], eax
-    mov  edi, ebx
+    mov  [rc_sub], eax              ; remember the highest units so far
+    mov  edi, ebx                   ; and which product it was
 .notbest:
-    mov  ecx, 10
+    mov  ecx, 10                    ; right-align in a 10-character column
     call print_uint_w
     PUTS s_rowc
     mov  eax, [sold+ebx*4]
@@ -467,7 +506,7 @@ do_report:
     cmp  dword [txn_count], 0
     je   .nosales                   ; avoid divide-by-zero
     PUTS s_ravg
-    xor  edx, edx
+    xor  edx, edx                   ; DIV divides edx:eax, so edx must be 0
     mov  eax, [total_sales]
     div  dword [txn_count]          ; average = revenue / transactions
     call print_money
@@ -485,10 +524,12 @@ do_report:
     jmp  menu
 
 ; ============================================================================
-;  Subroutines
+;  Subroutines  (called with CALL, finish with RET)
 ; ============================================================================
 
 ; ---- checkout: receipt, discount, tax, payment ------------------------------
+; Prints every cart line, works out subtotal -> discount -> tax -> total, asks
+; for cash, gives change and records the sale (or cancels and restores stock).
 checkout:
     PUTS s_rcpt
     xor  ebx, ebx                   ; cart line index
@@ -496,28 +537,28 @@ checkout:
 .line:                              ; loop over every cart line
     cmp  ebx, [cart_count]
     jae  .totals
-    mov  esi, [cart_item+ebx*4]
-    mov  edi, [cart_qty+ebx*4]
+    mov  esi, [cart_item+ebx*4]     ; esi = product index of this line
+    mov  edi, [cart_qty+ebx*4]      ; edi = quantity of this line
     PUTS s_sp2
     mov  eax, esi
     imul eax, eax, NAMELEN
     lea  ecx, [item_names+eax]
     mov  edx, NAMELEN
-    call write_buf
+    call write_buf                  ; product name
     PUTS s_x
     mov  eax, edi
     mov  ecx, 5
-    call print_uint_w
+    call print_uint_w               ; quantity
     PUTS s_at
     mov  eax, [item_price+esi*4]
     mov  ecx, 16
-    call print_money_w
+    call print_money_w              ; unit price
     PUTS s_eq
     mov  eax, [item_price+esi*4]
     mul  edi                        ; line total = price * qty
-    add  ebp, eax
+    add  ebp, eax                   ; add to the subtotal
     mov  ecx, 16
-    call print_money_w
+    call print_money_w              ; line total
     PUTS s_nl
     inc  ebx
     jmp  .line
@@ -531,7 +572,7 @@ checkout:
     jmp  .havepct
 .tier2:
     cmp  ebp, 10000                 ; >= RM100 -> 5%
-    jb   .havepct
+    jb   .havepct                   ; below RM100 -> 0%
     mov  ecx, 5
 .havepct:
     mov  [rc_pct], ecx
@@ -548,10 +589,10 @@ checkout:
     mul  ecx
     div  ebx                        ; tax = net * 6 / 100
     mov  [rc_tax], eax
-    add  eax, edi
+    add  eax, edi                   ; total = net amount + tax
     mov  [rc_total], eax
 
-    PUTS s_subtot
+    PUTS s_subtot                   ; print the totals block
     mov  eax, [rc_sub]
     mov  ecx, 16
     call print_money_w
@@ -580,17 +621,17 @@ checkout:
     call print_money_w
     PUTS s_nl
 
-.pay:
+.pay:                               ; keep asking until the cash is enough
     PUTS s_pay
     call read_money                 ; eax = cents, or -1 if invalid
     cmp  eax, -1
     je   .badpay
     test eax, eax
-    jz   .cancel
+    jz   .cancel                    ; 0 = cancel the sale
     cmp  eax, [rc_total]
-    jb   .short
+    jb   .short                     ; cash is less than the total
     sub  eax, [rc_total]            ; change due
-    push eax
+    push eax                        ; keep the change while PUTS runs
     PUTS s_change
     pop  eax
     mov  ecx, 16
@@ -601,7 +642,7 @@ checkout:
     add  [total_sales], eax
     inc  dword [txn_count]
     xor  ebx, ebx
-.tally:
+.tally:                             ; add each line's quantity to "units sold"
     cmp  ebx, [cart_count]
     jae  .done
     mov  esi, [cart_item+ebx*4]
@@ -633,15 +674,16 @@ checkout:
     ret
 
 ; ---- show_inventory: table of all products ---------------------------------
+; Prints the bordered, aligned product table (one row per product).
 show_inventory:
-    pusha
+    pusha                           ; save all registers, restored by popa
     PUTS s_invhdr
-    xor  ebx, ebx
+    xor  ebx, ebx                   ; ebx = product index
 .row:
     cmp  ebx, [item_count]
     jae  .end
     PUTS s_rowb
-    lea  eax, [ebx+1]
+    lea  eax, [ebx+1]               ; item number = index + 1
     mov  ecx, 3                     ; item numbers up to 12 stay in line
     call print_uint_w
     PUTS s_rowc
@@ -649,24 +691,24 @@ show_inventory:
     imul eax, eax, NAMELEN
     lea  ecx, [item_names+eax]
     mov  edx, NAMELEN
-    call write_buf
+    call write_buf                  ; name
     PUTS s_rowc
     mov  eax, [item_price+ebx*4]
     mov  ecx, 12
-    call print_money_w
+    call print_money_w              ; price
     PUTS s_rowc
     mov  eax, [item_stock+ebx*4]
     mov  ecx, 5
-    call print_uint_w
+    call print_uint_w               ; stock
     PUTS s_rowc
-    mov  eax, [item_stock+ebx*4]
+    mov  eax, [item_stock+ebx*4]    ; choose the status text
     mov  esi, s_outstock
     test eax, eax
     jz   .status                    ; 0 units  -> Out of Stock
     mov  esi, s_lowstock
     cmp  eax, LOWSTOCK
     jb   .status                    ; below 5  -> Low Stock
-    mov  esi, s_instock
+    mov  esi, s_instock             ; otherwise -> In Stock
 .status:
     call print_str
     PUTS s_rowend
@@ -680,19 +722,21 @@ show_inventory:
     ret
 
 ; ---- write_buf: ecx = buffer, edx = length ---------------------------------
+; Prints exactly edx characters (used for product names, which have no 0 end).
 write_buf:
     pusha
     mov  eax, SYS_WRITE
-    mov  ebx, 1
+    mov  ebx, 1                     ; 1 = standard output (the screen)
     int  0x80
     popa
     ret
 
 ; ---- print_str: esi = zero-terminated string -------------------------------
+; First finds the length (counts characters until the 0), then writes them.
 print_str:
     pusha
-    mov  ecx, esi
-    xor  edx, edx
+    mov  ecx, esi                   ; ecx = start of the text
+    xor  edx, edx                   ; edx = length so far
 .len:
     cmp  byte [esi+edx], 0
     je   .out
@@ -706,35 +750,38 @@ print_str:
     ret
 
 ; ---- print_uint: eax = unsigned number -------------------------------------
+; Converts a number to text: divide by 10 again and again; each remainder is
+; the next digit from the right.  Digits are stored backwards in numbuf.
 print_uint:
     pusha
-    mov  edi, numbuf+11
-    mov  byte [edi], 0
+    mov  edi, numbuf+11             ; start at the end of the buffer
+    mov  byte [edi], 0              ; end-of-string marker
     mov  ebx, 10
 .digit:                             ; repeated division by 10
     xor  edx, edx
-    div  ebx
-    add  dl, '0'
+    div  ebx                        ; eax = quotient, edx = remainder (a digit)
+    add  dl, '0'                    ; digit 0..9 -> character '0'..'9'
     dec  edi
     mov  [edi], dl
     test eax, eax
-    jnz  .digit
-    mov  esi, edi
+    jnz  .digit                     ; continue until the quotient is 0
+    mov  esi, edi                   ; edi now points at the first digit
     call print_str
     popa
     ret
 
 ; ---- print_money: eax = cents, prints "RM d.dd" ----------------------------
+; Example: 12905 cents -> 12905 / 100 = 129 ringgit, remainder 5 sen -> RM 129.05
 print_money:
     pusha
     xor  edx, edx
     mov  ebx, 100
     div  ebx                        ; eax = ringgit, edx = cents
-    push edx
+    push edx                        ; keep the sen for later
     PUTS s_rm
-    call print_uint
+    call print_uint                 ; print the ringgit
     PUTS s_dot
-    pop  eax
+    pop  eax                        ; eax = sen
     cmp  eax, 10
     jae  .two
     PUTS s_zero                     ; leading zero for 0..9 cents
@@ -744,26 +791,28 @@ print_money:
     ret
 
 ; ---- print_padded: esi = string, ecx = field width (right-aligned) ---------
+; Prints spaces first so that the text ends at the right edge of its column.
 print_padded:
     pusha
     xor  edx, edx
-.len:
+.len:                               ; edx = length of the string
     cmp  byte [esi+edx], 0
     je   .pad
     inc  edx
     jmp  .len
 .pad:
     sub  ecx, edx                   ; spaces needed = width - length
-    jbe  .print
+    jbe  .print                     ; text already as wide as the field
 .sp:
     PUTS s_space
-    loop .sp
+    loop .sp                        ; print ecx spaces
 .print:
     call print_str
     popa
     ret
 
 ; ---- print_uint_w: eax = number, ecx = field width -------------------------
+; Same as print_uint, but the number is right-aligned in a column.
 print_uint_w:
     pusha
     mov  edi, numbuf+11
@@ -778,22 +827,23 @@ print_uint_w:
     test eax, eax
     jnz  .digit
     mov  esi, edi
-    call print_padded
+    call print_padded               ; pads using the width still in ecx
     popa
     ret
 
 ; ---- print_money_w: eax = cents, ecx = field width for "RM d.dd" -----------
+; Builds the text "RM d.dd" in moneybuf, then prints it right-aligned.
 print_money_w:
     pusha
     mov  edi, moneybuf
     mov  byte [edi], 'R'
     mov  byte [edi+1], 'M'
     mov  byte [edi+2], ' '
-    add  edi, 3
+    add  edi, 3                     ; edi = where the digits go
     xor  edx, edx
     mov  ebx, 100
     div  ebx                        ; eax = ringgit, edx = sen
-    push edx
+    push edx                        ; keep the sen
     mov  esi, numbuf+11             ; ringgit digits, built backwards
     mov  ebx, 10
 .digit:
@@ -804,7 +854,7 @@ print_money_w:
     mov  [esi], dl
     test eax, eax
     jnz  .digit
-.copy:
+.copy:                              ; copy the digits into moneybuf, forwards
     cmp  esi, numbuf+11
     jae  .sen
     mov  al, [esi]
@@ -814,7 +864,7 @@ print_money_w:
     jmp  .copy
 .sen:
     mov  byte [edi], '.'
-    pop  eax
+    pop  eax                        ; eax = sen (0..99)
     xor  edx, edx
     mov  ebx, 10
     div  ebx                        ; eax = tens of sen, edx = units
@@ -822,7 +872,7 @@ print_money_w:
     add  dl, '0'
     mov  [edi+1], al
     mov  [edi+2], dl
-    mov  byte [edi+3], 0
+    mov  byte [edi+3], 0            ; end of string
     mov  esi, moneybuf
     call print_padded
     popa
@@ -838,45 +888,46 @@ read_line:
     xor  esi, esi                   ; characters stored so far
 .getc:
     mov  eax, SYS_READ
-    xor  ebx, ebx
+    xor  ebx, ebx                   ; 0 = standard input (the keyboard)
     mov  ecx, numbuf                ; 1-byte scratch
-    mov  edx, 1
-    int  0x80
+    mov  edx, 1                     ; read exactly one character
+    int  0x80                       ; eax = number of bytes read (0 = end)
     test eax, eax
     jle  .eof
-    mov  al, [numbuf]
+    mov  al, [numbuf]               ; the character just read
     cmp  al, 10
-    je   .endline
+    je   .endline                   ; Enter ends the line
     cmp  esi, 62
     jae  .getc                      ; discard overflow characters
-    mov  [inbuf+esi], al
+    mov  [inbuf+esi], al            ; store it in inbuf
     inc  esi
     jmp  .getc
 .endline:
-    mov  byte [inbuf+esi], 10
+    mov  byte [inbuf+esi], 10       ; keep the Enter, then the end marker 0
     mov  byte [inbuf+esi+1], 0
     pop  esi
     pop  edx
     pop  ecx
     pop  ebx
     ret
-.eof:
+.eof:                               ; keyboard input closed: leave the program
     PUTS s_bye
     xor  ebx, ebx
     jmp  exit_code
 
 ; ---- read_int: eax = parsed number, or -1 when input is not a number --------
+; Turns the typed text into a number: for each digit, number = number*10 + digit.
 read_int:
     push ebx
     push ecx
     push esi
     call read_line
-    mov  esi, inbuf
-    xor  eax, eax
+    mov  esi, inbuf                 ; esi -> first typed character
+    xor  eax, eax                   ; eax = the number being built
     xor  ecx, ecx                   ; digit counter
 .next:
-    movzx ebx, byte [esi]
-    sub  bl, '0'
+    movzx ebx, byte [esi]           ; read a character (zero-extended)
+    sub  bl, '0'                    ; '0'..'9' -> 0..9 (others wrap to > 9)
     cmp  bl, 9
     ja   .end                       ; not a digit
     imul eax, eax, 10
@@ -894,7 +945,7 @@ read_int:
     cmp  byte [esi], 13
     je   .ret
 .bad:
-    mov  eax, -1
+    mov  eax, -1                    ; -1 means "invalid"
 .ret:
     pop  esi
     pop  ecx
@@ -902,6 +953,8 @@ read_int:
     ret
 
 ; ---- read_money: eax = cents parsed from "RM" or "RM.sen", or -1 if invalid --
+; Accepts "2861", "2861.4" or "2861.04": ringgit digits, then an optional '.'
+; with 1 or 2 digits of sen.  The result is converted to cents.
 read_money:
     push ebx
     push ecx
@@ -911,7 +964,7 @@ read_money:
     mov  esi, inbuf
     xor  eax, eax
     xor  ecx, ecx                   ; digit counter
-.rm:
+.rm:                                ; read the ringgit digits
     movzx ebx, byte [esi]
     sub  bl, '0'
     cmp  bl, 9
@@ -932,7 +985,7 @@ read_money:
     inc  esi
     xor  ecx, ecx
     xor  edi, edi                   ; sen
-.fr:
+.fr:                                ; read the sen digits (at most 2)
     movzx ebx, byte [esi]
     sub  bl, '0'
     cmp  bl, 9
@@ -951,7 +1004,7 @@ read_money:
     jne  .addsen
     imul edi, edi, 10               ; "5.5" means 50 sen
 .addsen:
-    add  eax, edi
+    add  eax, edi                   ; cents = ringgit*100 + sen
 .chkend:
     cmp  byte [esi], 10             ; nothing may follow the amount
     je   .ret
