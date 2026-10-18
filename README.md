@@ -45,6 +45,17 @@ Discount rules: subtotal ≥ RM100 → 5 %, ≥ RM500 → 10 %. Cancelling payme
 * **Loops** – `loop` (PIN compare); `cmp/jae/jmp` loops over the cart, inventory table, report rows, digit conversion, input parsing, payment retry.
 * **Jumps** – conditional (`je jne ja jb jle jz ...`) for validation, stock checks, discount tiers, divide-by-zero guard; unconditional `jmp` for the menu loop and retries; `call/ret` for subroutines.
 
+## Additional control and robustness features
+* **Access control** – staff PIN with 3 attempts, then the system locks and exits with an error code.
+* **Input validation** – menu choices, item numbers, quantities and cash amounts are checked; letters, empty input, zero, out-of-range values and over-long numbers are rejected and the user is asked again.
+* **Stock control** – a sale cannot exceed available stock; stock is reserved when an item is added to the cart and returned if the sale is cancelled; a `[LOW]` warning shows below 5 units.
+* **Payment control** – insufficient cash is rejected and entering 0 cancels the sale.
+* **Limits** – the cart holds at most 10 lines and restocking is capped at 999 units.
+* **Error safety** – divide-by-zero guard in the sales report and a clean exit if input ends.
+* **Business rules** – tiered discounts and 6 % tax.
+* **Reports** – totals, average sale and best seller.
+* **Usability** – coloured messages and money shown in RM with sen.
+
 ## System flowchart
 ```mermaid
 flowchart TD
