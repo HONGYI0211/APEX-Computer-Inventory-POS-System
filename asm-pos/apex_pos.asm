@@ -12,11 +12,14 @@
 
 bits 32
 
-NITEMS   equ 5          ; number of products in the catalogue
+DEFAULTITEMS equ 5      ; products that ship with the system
+MAXITEMS equ 12         ; capacity of the product table
 NAMELEN  equ 12         ; fixed width of a product name field
 MAXCART  equ 10         ; maximum lines in one sale
-MAXSTOCK equ 999        ; upper limit for stock after a restock
-LOWSTOCK equ 5          ; stock below this is flagged [LOW]
+MAXSTOCK equ 999        ; upper limit for stock
+LOWSTOCK equ 5          ; stock below this shows as "Low Stock"
+MAXPRICE equ 9999999    ; highest price for a new product (RM 99999.99)
+CARTLIMIT equ 40000000  ; highest value of one sale in cents (RM 400000.00)
 TAXRATE  equ 6          ; sales tax, percent
 
 ; Linux i386 system call numbers
@@ -42,77 +45,97 @@ section .data
 ; ----------------------------------------------------------------------------
 pin         db "1234"
 
-; product table (parallel arrays, index 0..NITEMS-1)
+; product table (parallel arrays); the first DEFAULTITEMS entries are the
+; built-in products, the remaining slots are filled by "Add new product"
+item_count  dd DEFAULTITEMS
 item_names:
     NAME "Laptop"
     NAME "Monitor"
     NAME "Keyboard"
     NAME "Mouse"
     NAME "USB Flash"
+    times (MAXITEMS-DEFAULTITEMS)*NAMELEN db ' '
 item_price  dd 299900, 59900, 8900, 4500, 2500      ; in cents
+    times MAXITEMS-DEFAULTITEMS dd 0
 item_stock  dd 5, 8, 20, 30, 50                     ; modified at run time
+    times MAXITEMS-DEFAULTITEMS dd 0
 
 s_banner    db 27,"[1;36m",10
-            db "  ==========================================",10
-            db "    APEX COMPUTER SHOP  -  POS & INVENTORY SYSTEM",10
-            db "  ==========================================",27,"[0m",10,0
+            db "  ======================================================",10
+            db "      APEX COMPUTER SHOP  -  POS & INVENTORY SYSTEM",10
+            db "  ======================================================",27,"[0m",10,0
 s_pin       db "  Enter staff PIN: ",0
 s_wrong     db 27,"[31m  Wrong PIN.",27,"[0m",10,0
 s_locked    db 27,"[31m  Too many failed attempts. System locked.",27,"[0m",10,0
 s_welcome   db 27,"[32m  Login successful.",27,"[0m",10,0
 
-s_menu      db 10,27,"[1m  ---------- MAIN MENU ----------",27,"[0m",10
+s_menu      db 10,27,"[1m  ---------------------- MAIN MENU ---------------------",27,"[0m",10
             db "   1. New sale",10
             db "   2. View inventory",10
             db "   3. Restock item",10
-            db "   4. Sales report",10
-            db "   5. Exit",10
+            db "   4. Add new product",10
+            db "   5. Sales report",10
+            db "   6. Exit",10
             db "  Choice: ",0
 s_invalid   db 27,"[31m  Invalid input, try again.",27,"[0m",10,0
 s_bye       db 10,"  Session closed. Goodbye!",10,0
 
-s_invhdr    db 10,"  +-----+--------------+--------------+-------+",10
-            db "  | No. | Product      |        Price | Stock |",10
-s_tsep      db "  +-----+--------------+--------------+-------+",10,0
-s_low       db 27,"[33m  [LOW]",27,"[0m",0
+s_reset     db 27,"[0m",0
+s_invhdr    db 10,27,"[33m"
+            db "  +-----+--------------+--------------+-------+--------------+",10
+            db "  | No. | Product      |        Price | Stock | Status       |",10
+s_tsep      db "  +-----+--------------+--------------+-------+--------------+",10,0
+s_instock   db "In Stock    ",0
+s_lowstock  db "Low Stock   ",0
+s_outstock  db "Out of Stock",0
 s_sp2       db "  ",0
 s_space     db " ",0
-s_rowa      db "  |  ",0
 s_rowb      db "  | ",0
 s_rowc      db " | ",0
 s_rowend    db " |",0
 s_nl        db 10,0
 
-s_selitem   db "  Item no. (0 = checkout, 6 = back to menu): ",0
+s_selitem   db "  Item no. (0 = checkout, ",0
+s_selitem2  db " = back to menu): ",0
 s_qty       db "  Quantity: ",0
 s_added     db 27,"[32m  Added to cart.",27,"[0m",10,0
 s_nostock   db 27,"[31m  Not enough stock for that quantity.",27,"[0m",10,0
+s_toobig    db 27,"[31m  Sale value limit reached - checkout first.",27,"[0m",10,0
 s_back      db "  Back to main menu (cart cleared, stock restored).",10,0
 s_cartfull  db "  Cart is full - proceeding to checkout.",10,0
 
-s_rcpt      db 10,"  =================== RECEIPT ====================",10,0
+s_rcpt      db 10,"  ======================== RECEIPT =========================",10,0
 s_x         db " x ",0
 s_at        db " @ ",0
 s_eq        db " = ",0
-s_subtot    db "  ------------------------------------------------",10
-            db "  Subtotal                          : ",0
-s_disc      db "  Less: Discount                    : ",0
-s_pcta      db " (",0
+s_subtot    db "  ----------------------------------------------------------",10
+            db "  Subtotal                                : ",0
+s_disc      db "  Less: Discount (",0
+s_discpad   db "                    : ",0
 s_pctb      db "%)",0
-s_tax       db "  Tax (6%)                          : ",0
-s_total     db "  TOTAL                             : ",0
+s_tax       db "  Tax (6%)                                : ",0
+s_total     db "  TOTAL                                   : ",0
 s_pay       db 10,"  Cash received in RM, e.g. 2861.04 (0 = cancel): ",0
 s_short     db 27,"[31m  Insufficient payment.",27,"[0m",10,0
-s_change    db "  Change                            : ",0
+s_change    db "  Change                                  : ",0
 s_thanks    db 27,"[32m  Payment complete. Thank you!",27,"[0m",10,0
 s_cancel    db "  Sale cancelled - stock restored.",10,0
 
+s_apname    db "  New product name (max 12 characters, empty = cancel): ",0
+s_approce   db "  Price in RM, e.g. 49.90 (0 = cancel): ",0
+s_apstock   db "  Initial stock (0-999): ",0
+s_apfull    db 27,"[31m  Product list is full (max 12 products).",27,"[0m",10,0
+s_badname   db 27,"[31m  Invalid name: use 1-12 printable characters.",27,"[0m",10,0
+s_badprice  db 27,"[31m  Price must be between RM 0.01 and RM 99999.99.",27,"[0m",10,0
+s_badstock  db 27,"[31m  Stock must be a whole number from 0 to 999.",27,"[0m",10,0
+s_apdone    db 27,"[32m  Product added.",27,"[0m",10,0
 s_rsitem    db "  Restock which item (0 = back): ",0
 s_rsqty     db "  Units to add: ",0
 s_rsfull    db 27,"[31m  Stock would exceed the limit of 999.",27,"[0m",10,0
 s_rsok      db 27,"[32m  Stock updated.",27,"[0m",10,0
 
-s_rephdr    db 10,"  ============ SALES REPORT ============",10
+s_rephdr    db 10,"  ================ SALES REPORT ================",10
+            db 27,"[33m"
             db "  +--------------+------------+----------------+",10
             db "  | Product      | Units sold |        Revenue |",10
 s_rsep      db "  +--------------+------------+----------------+",10,0
@@ -135,7 +158,8 @@ moneybuf    resb 20
 cart_item   resd MAXCART            ; product index per cart line
 cart_qty    resd MAXCART            ; quantity per cart line
 cart_count  resd 1
-sold        resd NITEMS             ; units sold per product
+cart_total  resd 1                  ; value of the cart in cents
+sold        resd MAXITEMS           ; units sold per product
 total_sales resd 1                  ; cents
 txn_count   resd 1
 rc_sub      resd 1
@@ -192,8 +216,10 @@ menu:
     cmp  eax, 3
     je   do_restock
     cmp  eax, 4
-    je   do_report
+    je   do_addproduct
     cmp  eax, 5
+    je   do_report
+    cmp  eax, 6
     je   do_exit
     PUTS s_invalid
     jmp  menu
@@ -212,16 +238,25 @@ exit_code:                          ; ebx = exit status
 ; ---- option 1: new sale ----------------------------------------------------
 do_sale:
     mov  dword [cart_count], 0
+    mov  dword [cart_total], 0
     call show_inventory
 .item:
     PUTS s_selitem
+    mov  eax, [item_count]
+    inc  eax                        ; "back to menu" is always the number after
+    call print_uint                 ; the last product
+    PUTS s_selitem2
     call read_int
     test eax, eax
     jz   .checkout                  ; 0 -> finish cart
-    cmp  eax, 6
-    je   .back                      ; 6 -> abandon cart, return to menu
-    cmp  eax, NITEMS
-    ja   .bad                       ; also catches -1 (invalid number)
+    mov  ecx, [item_count]
+    cmp  eax, ecx
+    jbe  .picked                    ; 1..item_count = a product
+    inc  ecx
+    cmp  eax, ecx
+    je   .back                      ; item_count+1 -> abandon cart, back to menu
+    jmp  .bad                       ; anything else, including -1
+.picked:
     dec  eax
     mov  esi, eax                   ; esi = product index
     PUTS s_qty
@@ -231,6 +266,15 @@ do_sale:
     mov  edi, eax                   ; edi = quantity
     cmp  edi, [item_stock+esi*4]
     ja   .nostock
+    mov  eax, [item_price+esi*4]    ; keep the cart value inside 32 bits
+    mul  edi
+    test edx, edx
+    jnz  .toobig
+    add  eax, [cart_total]
+    jc   .toobig
+    cmp  eax, CARTLIMIT
+    ja   .toobig
+    mov  [cart_total], eax
     mov  ecx, [cart_count]          ; append line to the cart
     mov  [cart_item+ecx*4], esi
     mov  [cart_qty+ecx*4], edi
@@ -244,6 +288,9 @@ do_sale:
     jmp  .checkout
 .nostock:
     PUTS s_nostock
+    jmp  .item
+.toobig:
+    PUTS s_toobig
     jmp  .item
 .bad:
     PUTS s_invalid
@@ -276,7 +323,7 @@ do_restock:
     call read_int
     test eax, eax
     jz   menu
-    cmp  eax, NITEMS
+    cmp  eax, [item_count]
     ja   .bad
     dec  eax
     mov  esi, eax
@@ -297,7 +344,77 @@ do_restock:
     PUTS s_invalid
     jmp  .again
 
-; ---- option 4: sales report ------------------------------------------------
+; ---- option 4: add new product ---------------------------------------------
+do_addproduct:
+    cmp  dword [item_count], MAXITEMS
+    jb   .name
+    PUTS s_apfull
+    jmp  menu
+.name:
+    PUTS s_apname
+    call read_line
+    mov  esi, inbuf
+    xor  ecx, ecx                   ; ecx = name length
+.scan:                              ; accept 1..NAMELEN printable characters
+    mov  al, [esi+ecx]
+    cmp  al, 10
+    je   .scanned
+    cmp  al, 13
+    je   .scanned
+    cmp  al, 32
+    jb   .badname
+    cmp  al, 126
+    ja   .badname
+    inc  ecx
+    cmp  ecx, NAMELEN
+    jbe  .scan
+.badname:
+    PUTS s_badname
+    jmp  .name
+.scanned:
+    test ecx, ecx
+    jz   menu                       ; empty name = cancel
+    mov  edx, ecx                   ; copy the name into the next free slot and
+    mov  eax, [item_count]          ; pad it with spaces up to NAMELEN
+    imul eax, eax, NAMELEN
+    lea  edi, [item_names+eax]
+    rep  movsb
+    mov  ecx, NAMELEN
+    sub  ecx, edx
+    mov  al, ' '
+    rep  stosb
+.price:
+    PUTS s_approce
+    call read_money
+    cmp  eax, -1
+    je   .badprice
+    test eax, eax
+    jz   menu                       ; 0 = cancel
+    cmp  eax, MAXPRICE
+    ja   .badprice
+    mov  edi, eax                   ; edi = price in cents
+.stock:
+    PUTS s_apstock
+    call read_int
+    cmp  eax, MAXSTOCK
+    ja   .badstock                  ; also catches -1
+    mov  ecx, [item_count]          ; commit the new product
+    mov  [item_price+ecx*4], edi
+    mov  [item_stock+ecx*4], eax
+    mov  dword [sold+ecx*4], 0
+    inc  ecx
+    mov  [item_count], ecx
+    PUTS s_apdone
+    call show_inventory
+    jmp  menu
+.badprice:
+    PUTS s_badprice
+    jmp  .price
+.badstock:
+    PUTS s_badstock
+    jmp  .stock
+
+; ---- option 5: sales report ------------------------------------------------
 do_report:
     PUTS s_rephdr
     xor  ebx, ebx                   ; product index
@@ -305,7 +422,7 @@ do_report:
     xor  edi, edi                   ; best seller index
     mov  dword [rc_sub], 0          ; highest units seen so far
 .row:
-    cmp  ebx, NITEMS
+    cmp  ebx, [item_count]
     jae  .summary
     PUTS s_rowb
     mov  eax, ebx
@@ -334,6 +451,7 @@ do_report:
     jmp  .row
 .summary:
     PUTS s_rsep
+    PUTS s_reset
     PUTS s_rtxn
     mov  eax, [txn_count]
     call print_uint
@@ -388,17 +506,17 @@ checkout:
     call write_buf
     PUTS s_x
     mov  eax, edi
-    mov  ecx, 3
+    mov  ecx, 5
     call print_uint_w
     PUTS s_at
     mov  eax, [item_price+esi*4]
-    mov  ecx, 12
+    mov  ecx, 16
     call print_money_w
     PUTS s_eq
     mov  eax, [item_price+esi*4]
     mul  edi                        ; line total = price * qty
     add  ebp, eax
-    mov  ecx, 12
+    mov  ecx, 16
     call print_money_w
     PUTS s_nl
     inc  ebx
@@ -435,26 +553,30 @@ checkout:
 
     PUTS s_subtot
     mov  eax, [rc_sub]
-    mov  ecx, 12
+    mov  ecx, 16
     call print_money_w
     PUTS s_nl
     PUTS s_disc
-    mov  eax, [rc_disc]
-    mov  ecx, 12
-    call print_money_w
-    PUTS s_pcta
     mov  eax, [rc_pct]
     call print_uint
     PUTS s_pctb
+    cmp  dword [rc_pct], 10
+    jae  .wide
+    PUTS s_space                    ; keep the colon in line for 1-digit rates
+.wide:
+    PUTS s_discpad
+    mov  eax, [rc_disc]
+    mov  ecx, 16
+    call print_money_w
     PUTS s_nl
     PUTS s_tax
     mov  eax, [rc_tax]
-    mov  ecx, 12
+    mov  ecx, 16
     call print_money_w
     PUTS s_nl
     PUTS s_total
     mov  eax, [rc_total]
-    mov  ecx, 12
+    mov  ecx, 16
     call print_money_w
     PUTS s_nl
 
@@ -471,7 +593,7 @@ checkout:
     push eax
     PUTS s_change
     pop  eax
-    mov  ecx, 12
+    mov  ecx, 16
     call print_money_w
     PUTS s_nl
 
@@ -516,12 +638,13 @@ show_inventory:
     PUTS s_invhdr
     xor  ebx, ebx
 .row:
-    cmp  ebx, NITEMS
+    cmp  ebx, [item_count]
     jae  .end
-    PUTS s_rowa
-    lea  eax, [ebx+1]
-    call print_uint
     PUTS s_rowb
+    lea  eax, [ebx+1]
+    mov  ecx, 3                     ; item numbers up to 12 stay in line
+    call print_uint_w
+    PUTS s_rowc
     mov  eax, ebx
     imul eax, eax, NAMELEN
     lea  ecx, [item_names+eax]
@@ -535,16 +658,24 @@ show_inventory:
     mov  eax, [item_stock+ebx*4]
     mov  ecx, 5
     call print_uint_w
-    PUTS s_rowend
+    PUTS s_rowc
+    mov  eax, [item_stock+ebx*4]
+    mov  esi, s_outstock
+    test eax, eax
+    jz   .status                    ; 0 units  -> Out of Stock
+    mov  esi, s_lowstock
     cmp  eax, LOWSTOCK
-    jae  .ok
-    PUTS s_low
-.ok:
+    jb   .status                    ; below 5  -> Low Stock
+    mov  esi, s_instock
+.status:
+    call print_str
+    PUTS s_rowend
     PUTS s_nl
     inc  ebx
     jmp  .row
 .end:
     PUTS s_tsep
+    PUTS s_reset
     popa
     ret
 

@@ -33,10 +33,11 @@ In either folder, steps 3-5 can be done with `make run` if `make` is installed.
 |---|---|
 | Login | PIN check, 3-attempt loop, lock-out |
 | 1 New sale | Add items to a cart (max 10 lines), stock check, receipt, tiered discount, 6 % tax, cash payment, change |
-| 2 View inventory | Table of 5 products, price, stock, `[LOW]` warning below 5 units |
+| 2 View inventory | Table of all products with price, stock and status (In Stock / Low Stock / Out of Stock) |
 | 3 Restock | Add units to a product (max 999) |
-| 4 Sales report | Units/revenue per product, totals, average sale, best seller |
-| 5 Exit | Clean exit |
+| 4 Add new product | Enter name (max 12 characters), price and initial stock; the 5 default products are kept (table holds up to 12) |
+| 5 Sales report | Units/revenue per product, totals, average sale, best seller |
+| 6 Exit | Clean exit |
 
 Discount rules: subtotal ≥ RM100 → 5 %, ≥ RM500 → 10 %. Cancelling payment returns reserved stock.
 
@@ -48,9 +49,9 @@ Discount rules: subtotal ≥ RM100 → 5 %, ≥ RM500 → 10 %. Cancelling payme
 ## Additional control and robustness features
 * **Access control** – staff PIN with 3 attempts, then the system locks and exits with an error code.
 * **Input validation** – menu choices, item numbers, quantities and cash amounts are checked; letters, empty input, zero, out-of-range values and over-long numbers are rejected and the user is asked again.
-* **Stock control** – a sale cannot exceed available stock; stock is reserved when an item is added to the cart and returned if the sale is cancelled; a `[LOW]` warning shows below 5 units.
+* **Stock control** – a sale cannot exceed available stock; stock is reserved when an item is added to the cart and returned if the sale is cancelled; items below 5 units show as "Low Stock" and 0 units as "Out of Stock". During a sale, the number after the last product returns to the main menu and cancels the cart.
 * **Payment control** – insufficient cash is rejected and entering 0 cancels the sale.
-* **Limits** – the cart holds at most 10 lines and restocking is capped at 999 units.
+* **Limits** – the cart holds at most 10 lines, a sale is capped at RM 400000, stock at 999 units, a new product price at RM 99999.99, and the product table at 12 products.
 * **Error safety** – divide-by-zero guard in the sales report and a clean exit if input ends.
 * **Business rules** – tiered discounts and 6 % tax.
 * **Reports** – totals, average sale and best seller.
@@ -70,13 +71,20 @@ flowchart TD
     J -- 1 --> S1[Show inventory]
     J -- 2 --> V[Show inventory] --> M
     J -- 3 --> R1[Show inventory]
-    J -- 4 --> P[Sales report] --> M
-    J -- 5 --> E([Exit])
+    J -- 4 --> N1[/Name, price, initial stock/]
+    J -- 5 --> P[Sales report] --> M
+    J -- 6 --> E([Exit])
     J -- other --> W[Invalid input] --> M
+
+    N1 --> N2{Valid and table not full?}
+    N2 -- No --> N1
+    N2 -- Yes --> N3[Add product to table] --> M
 
     S1 --> S2[/Item no. and quantity/]
     S2 --> S3{Item = 0?}
-    S3 -- No --> S4{Valid item and qty?}
+    S3 -- No --> S9{Back to menu?}
+    S9 -- Yes --> S10[Cancel cart, restore stock] --> M
+    S9 -- No --> S4{Valid item and qty?}
     S4 -- No --> S2
     S4 -- Yes --> S5{Stock enough?}
     S5 -- No --> S2
