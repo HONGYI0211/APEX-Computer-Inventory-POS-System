@@ -9,24 +9,6 @@
 ;  Money is stored as integer cents (RM 29.99 = 2999) so that only integer
 ;  arithmetic (ADD, SUB, MUL, IMUL, DIV) is needed.
 ;
-;  HOW THE PROGRAM IS ORGANISED
-;  ----------------------------
-;  1. Login        : asks for the PIN (3 attempts).
-;  2. Main menu    : an endless loop that reads a choice and JUMPS to the
-;                    matching routine; every routine ends with "jmp menu".
-;  3. Menu options : 1 New sale, 2 View inventory, 3 Restock, 4 Add product,
-;                    5 Sales report, 6 Exit.
-;  4. Subroutines  : small helpers (printing, number conversion, input
-;                    reading) that are CALLed and return with RET.
-;
-;  HOW A LINUX PROGRAM TALKS TO THE KERNEL (no C library is used)
-;  --------------------------------------------------------------
-;  Put the system-call number in EAX and the arguments in EBX, ECX, EDX, then
-;  execute "int 0x80".  This program uses three calls:
-;      SYS_READ  (3): ebx = 0 (keyboard), ecx = buffer, edx = how many bytes
-;      SYS_WRITE (4): ebx = 1 (screen),   ecx = buffer, edx = how many bytes
-;      SYS_EXIT  (1): ebx = exit status (0 = OK)
-;
 ;  REGISTER HABITS USED IN THIS FILE
 ;  ---------------------------------
 ;  eax = working value / result of a calculation or of a subroutine
