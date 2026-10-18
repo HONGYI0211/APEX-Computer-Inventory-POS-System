@@ -10,6 +10,24 @@ nasm -f elf32 apex_pos.asm -o apex_pos.o && ld -m elf_i386 apex_pos.o -o apex_po
 ```
 Staff PIN: **1234** (3 attempts, then locked).
 
+## Ubuntu (WSL) setup guide
+
+### Guide 1: Ubuntu's own folder (`~/asm-pos`)
+1. Go to the folder: `cd ~/asm-pos`
+2. Check the source file is there: `ls` (you should see `apex_pos.asm`; if missing, create it with `nano apex_pos.asm` and paste the code, save with Ctrl+O then Enter, exit with Ctrl+X)
+3. Assemble: `nasm -f elf32 apex_pos.asm -o apex_pos.o`
+4. Link: `ld -m elf_i386 apex_pos.o -o apex_pos`
+5. Run, then enter the PIN `1234`: `./apex_pos`
+
+### Guide 2: the D: drive (`/mnt/d/...`)
+1. Go to the folder: `cd /mnt/d/Coding/APEX-Computer-Inventory-POS-System/asm-pos`
+2. Check the files: `ls` (you should see `apex_pos.asm` and `Makefile`)
+3. Assemble: `nasm -f elf32 apex_pos.asm -o apex_pos.o`
+4. Link: `ld -m elf_i386 apex_pos.o -o apex_pos`
+5. Run: `./apex_pos`
+
+In either folder, steps 3-5 can be done with `make run` if `make` is installed.
+
 ## Functionality
 | Menu | Feature |
 |---|---|
