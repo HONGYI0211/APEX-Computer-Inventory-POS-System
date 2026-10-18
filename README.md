@@ -43,19 +43,21 @@ Discount rules: subtotal ≥ RM100 → 5 %, ≥ RM500 → 10 %. Cancelling payme
 
 ## Where the required constructs are used
 * **Arithmetic** – `mul/imul` (line total, RM→cents), `div` (discount %, tax %, average sale, digit extraction for printing), `add/sub` (subtotal, stock, change). Money is held as integer cents.
-* **Loops** – `loop` (PIN compare); `cmp/jae/jmp` loops over the cart, inventory table, report rows, digit conversion, input parsing, payment retry.
+* **Loops** – `loop` (PIN compare, padding spaces); `rep movsb/stosb` (copying and padding a new product name); `cmp/jae/jmp` loops over the cart, inventory table, report rows, digit conversion, input parsing, input retries.
 * **Jumps** – conditional (`je jne ja jb jle jz ...`) for validation, stock checks, discount tiers, divide-by-zero guard; unconditional `jmp` for the menu loop and retries; `call/ret` for subroutines.
 
 ## Additional control and robustness features
 * **Access control** – staff PIN with 3 attempts, then the system locks and exits with an error code.
-* **Input validation** – menu choices, item numbers, quantities and cash amounts are checked; letters, empty input, zero, out-of-range values and over-long numbers are rejected and the user is asked again.
-* **Stock control** – a sale cannot exceed available stock; stock is reserved when an item is added to the cart and returned if the sale is cancelled; items below 5 units show as "Low Stock" and 0 units as "Out of Stock". During a sale, the number after the last product returns to the main menu and cancels the cart.
-* **Payment control** – insufficient cash is rejected and entering 0 cancels the sale.
-* **Limits** – the cart holds at most 10 lines, a sale is capped at RM 400000, stock at 999 units, a new product price at RM 99999.99, and the product table at 12 products.
-* **Error safety** – divide-by-zero guard in the sales report and a clean exit if input ends.
-* **Business rules** – tiered discounts and 6 % tax.
-* **Reports** – totals, average sale and best seller.
-* **Usability** – coloured messages and money shown in RM with sen.
+* **Input validation** – menu choices, item numbers, quantities, stock levels and cash amounts are checked. Letters, empty input, zero, out-of-range values, over-long numbers and trailing characters (for example `5.5` or `3x` where a whole number is needed) are rejected and the user is asked again. Product names must be 1-12 printable characters.
+* **Stock control** – a sale cannot exceed available stock; stock is reserved when an item is added to the cart and returned if the sale is cancelled. The Status column shows "In Stock", "Low Stock" (below 5 units) or "Out of Stock" (0 units).
+* **Cart control** – during a sale, `0` goes to checkout and the number after the last product returns to the main menu, cancelling the cart and restoring its stock.
+* **Payment control** – cash may be entered with sen (for example `2861.04`); insufficient or invalid amounts are rejected and entering `0` cancels the sale and restores stock.
+* **Product management** – new products can be added at run time (name, price, initial stock) while the 5 default products are kept; entering an empty name or a price of `0` cancels, and a full table (12 products) is reported.
+* **Limits** – the cart holds at most 10 lines, one sale is capped at RM 400000 (keeps the 32-bit arithmetic from overflowing), stock at 999 units, a new product price at RM 99999.99, and the product table at 12 products.
+* **Error safety** – divide-by-zero guard for the average sale in the sales report, and a clean exit if input ends.
+* **Business rules** – tiered discounts (5 % / 10 %) and 6 % tax.
+* **Reports** – per-product units and revenue (before discount and tax), transactions, units sold, gross revenue (what customers paid), average sale and best seller.
+* **Usability** – coloured messages, yellow bordered tables with right-aligned columns, and money shown in RM with sen.
 
 ## System flowchart
 ```mermaid
@@ -71,14 +73,22 @@ flowchart TD
     J -- 1 --> S1[Show inventory]
     J -- 2 --> V[Show inventory] --> M
     J -- 3 --> R1[Show inventory]
-    J -- 4 --> N1[/Name, price, initial stock/]
-    J -- 5 --> P[Sales report] --> M
+    J -- 4 --> N0{Product table full?}
+    J -- 5 --> P[Print report table and totals]
     J -- 6 --> E([Exit])
     J -- other --> W[Invalid input] --> M
 
-    N1 --> N2{Valid and table not full?}
-    N2 -- No --> N1
-    N2 -- Yes --> N3[Add product to table] --> M
+    P --> P2{Transactions = 0?}
+    P2 -- Yes --> P3[No sales message] --> M
+    P2 -- No --> P4[Average sale and best seller] --> M
+
+    N0 -- Yes --> N00[Full message] --> M
+    N0 -- No --> N1[/Name, price, initial stock/]
+    N1 --> N2{Cancelled?}
+    N2 -- Yes --> M
+    N2 -- No --> N4{Valid name, price, stock?}
+    N4 -- No --> N1
+    N4 -- Yes --> N3[Add product to table] --> M
 
     S1 --> S2[/Item no. and quantity/]
     S2 --> S3{Item = 0?}
@@ -88,7 +98,9 @@ flowchart TD
     S4 -- No --> S2
     S4 -- Yes --> S5{Stock enough?}
     S5 -- No --> S2
-    S5 -- Yes --> S6[Add to cart, reserve stock]
+    S5 -- Yes --> S11{Sale value within limit?}
+    S11 -- No --> S2
+    S11 -- Yes --> S6[Add to cart, reserve stock]
     S6 --> S7{Cart full?}
     S7 -- No --> S2
     S7 -- Yes --> K
@@ -104,7 +116,9 @@ flowchart TD
     K4 -- No --> K6[No discount]
     K3 & K5 & K6 --> K7[Tax 6%, total]
     K7 --> K8[/Cash received/]
-    K8 --> K9{Cash = 0?}
+    K8 --> K13{Valid amount?}
+    K13 -- No --> K8
+    K13 -- Yes --> K9{Cash = 0?}
     K9 -- Yes --> K10[Restore stock] --> M
     K9 -- No --> K11{Cash >= total?}
     K11 -- No --> K8
@@ -119,6 +133,8 @@ flowchart TD
 ```
 
 ### Subroutine flow (number printing)
+`print_money_w` and `print_uint_w` use the same steps and then pad the text on the left to a fixed width, which keeps the table and receipt columns aligned.
+
 ```mermaid
 flowchart LR
     A[print_money cents] --> B[div by 100 -> RM and sen]
