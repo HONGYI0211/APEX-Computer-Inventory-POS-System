@@ -62,74 +62,114 @@ Discount rules: subtotal ≥ RM100 → 5 %, ≥ RM500 → 10 %. Cancelling payme
 ## System flowchart
 ```mermaid
 flowchart TD
-    A([Start]) --> B[/Enter PIN/]
+    A([Start]) --> B[/Enter staff PIN/]
     B --> C{PIN correct?}
-    C -- No --> D{Attempts left?}
-    D -- Yes --> B
-    D -- No --> X([Locked - exit])
-    C -- Yes --> M[Show main menu]
-    M --> I[/Read choice/]
-    I --> J{Choice}
-    J -- 1 --> S1[Show inventory]
-    J -- 2 --> V[Show inventory] --> M
-    J -- 3 --> R1[Show inventory]
-    J -- 4 --> N0{Product table full?}
-    J -- 5 --> P[Print report table and totals]
-    J -- 6 --> E([Exit])
-    J -- other --> W[Invalid input] --> M
+    C -->|No| D{Attempts left?}
+    D -->|Yes| B
+    D -->|No| X(["System locked - exit"])
+    C -->|Yes| M[Show main menu]
+    M --> I[/Enter menu choice/]
+    I --> J{Choice?}
+    J -->|"1 New sale"| S0["Clear cart, show inventory"]
+    J -->|"2 Inventory"| V[Show inventory table]
+    V --> M
+    J -->|"3 Restock"| R0[Show inventory table]
+    J -->|"4 Add product"| N0{Product table full?}
+    J -->|"5 Report"| P1["Print units and revenue per product"]
+    J -->|"6 Exit"| E(["Goodbye - exit"])
+    J -->|Other| W[Invalid input]
+    W --> M
 
-    P --> P2{Transactions = 0?}
-    P2 -- Yes --> P3[No sales message] --> M
-    P2 -- No --> P4[Average sale and best seller] --> M
+    S0 --> S1[/Enter item number/]
+    S1 --> S2{"Item = 0?"}
+    S2 -->|Yes| S3{Cart empty?}
+    S3 -->|Yes| M
+    S3 -->|No| K0["Line total = price × qty, add to subtotal"]
+    S2 -->|No| S4{Back to menu number?}
+    S4 -->|Yes| S5["Restore stock, clear cart"]
+    S5 --> M
+    S4 -->|No| S6{Valid product number?}
+    S6 -->|No| S1
+    S6 -->|Yes| S7[/Enter quantity/]
+    S7 --> S8{"Qty ≥ 1 and stock enough?"}
+    S8 -->|No| S1
+    S8 -->|Yes| S9{"Sale value ≤ RM400000?"}
+    S9 -->|No| S1
+    S9 -->|Yes| S10["Add line to cart, reserve stock"]
+    S10 --> S11{"Cart full (10 lines)?"}
+    S11 -->|No| S1
+    S11 -->|Yes| K0
 
-    N0 -- Yes --> N00[Full message] --> M
-    N0 -- No --> N1[/Name, price, initial stock/]
-    N1 --> N2{Cancelled?}
-    N2 -- Yes --> M
-    N2 -- No --> N4{Valid name, price, stock?}
-    N4 -- No --> N1
-    N4 -- Yes --> N3[Add product to table] --> M
+    K0 --> K1{"Subtotal ≥ RM500?"}
+    K1 -->|Yes| K2["Discount 10%"]
+    K1 -->|No| K3{"Subtotal ≥ RM100?"}
+    K3 -->|Yes| K4["Discount 5%"]
+    K3 -->|No| K5[No discount]
+    K2 --> K6["Tax 6% of net, print total"]
+    K4 --> K6
+    K5 --> K6
+    K6 --> K7[/Enter cash received/]
+    K7 --> K8{Valid amount?}
+    K8 -->|No| K7
+    K8 -->|Yes| K9{"Cash = 0?"}
+    K9 -->|Yes| K10["Cancel sale, restore stock"]
+    K10 --> M
+    K9 -->|No| K11{"Cash ≥ total?"}
+    K11 -->|No| K7
+    K11 -->|Yes| K12["Print change, record sale"]
+    K12 --> M
 
-    S1 --> S2[/Item no. and quantity/]
-    S2 --> S3{Item = 0?}
-    S3 -- No --> S9{Back to menu?}
-    S9 -- Yes --> S10[Cancel cart, restore stock] --> M
-    S9 -- No --> S4{Valid item and qty?}
-    S4 -- No --> S2
-    S4 -- Yes --> S5{Stock enough?}
-    S5 -- No --> S2
-    S5 -- Yes --> S11{Sale value within limit?}
-    S11 -- No --> S2
-    S11 -- Yes --> S6[Add to cart, reserve stock]
-    S6 --> S7{Cart full?}
-    S7 -- No --> S2
-    S7 -- Yes --> K
-    S3 -- Yes --> S8{Cart empty?}
-    S8 -- Yes --> M
-    S8 -- No --> K[Checkout]
+    R0 --> R1[/Enter item number/]
+    R1 --> R2{"Item = 0?"}
+    R2 -->|Yes| M
+    R2 -->|No| R3{Valid product number?}
+    R3 -->|No| R1
+    R3 -->|Yes| R4[/Enter units to add/]
+    R4 --> R5{"Units ≥ 1 and new stock ≤ 999?"}
+    R5 -->|No| R1
+    R5 -->|Yes| R6[Update stock]
+    R6 --> R1
 
-    K --> K1[Loop cart lines: price x qty, subtotal]
-    K1 --> K2{Subtotal >= 500?}
-    K2 -- Yes --> K3[10% discount]
-    K2 -- No --> K4{Subtotal >= 100?}
-    K4 -- Yes --> K5[5% discount]
-    K4 -- No --> K6[No discount]
-    K3 & K5 & K6 --> K7[Tax 6%, total]
-    K7 --> K8[/Cash received/]
-    K8 --> K13{Valid amount?}
-    K13 -- No --> K8
-    K13 -- Yes --> K9{Cash = 0?}
-    K9 -- Yes --> K10[Restore stock] --> M
-    K9 -- No --> K11{Cash >= total?}
-    K11 -- No --> K8
-    K11 -- Yes --> K12[Change, update sales totals] --> M
+    N0 -->|Yes| N1[Show list full message]
+    N1 --> M
+    N0 -->|No| N2[/Enter product name/]
+    N2 --> N3{"Name printable, ≤ 12 chars?"}
+    N3 -->|No| N2
+    N3 -->|Yes| N4{Name empty?}
+    N4 -->|Yes| M
+    N4 -->|No| N5[Store padded name in next slot]
+    N5 --> N6[/Enter price/]
+    N6 --> N7{"Price = 0?"}
+    N7 -->|Yes| M
+    N7 -->|No| N8{"Valid and ≤ RM99999.99?"}
+    N8 -->|No| N6
+    N8 -->|Yes| N9[/Enter initial stock/]
+    N9 --> N10{"Stock 0 to 999?"}
+    N10 -->|No| N9
+    N10 -->|Yes| N11["Save product, count + 1"]
+    N11 --> N12[Show inventory table]
+    N12 --> M
 
-    R1 --> R2[/Item no. and units/]
-    R2 --> R3{Item = 0?}
-    R3 -- Yes --> M
-    R3 -- No --> R4{Valid and stock <= 999?}
-    R4 -- No --> R2
-    R4 -- Yes --> R5[Add stock] --> R2
+    P1 --> P2["Print transactions, units, gross revenue"]
+    P2 --> P3{"Transactions = 0?"}
+    P3 -->|Yes| P4[Show no sales message]
+    P4 --> M
+    P3 -->|No| P5["Average = revenue ÷ transactions"]
+    P5 --> P6[Show best seller]
+    P6 --> M
+
+    classDef term fill:#d5e8d4,stroke:#82b366
+    classDef io fill:#ffe6cc,stroke:#d79b00
+    classDef proc fill:#dae8fc,stroke:#6c8ebf
+    classDef dec fill:#fff2cc,stroke:#d6b656
+    classDef ok fill:#d5e8d4,stroke:#82b366
+    classDef err fill:#f8cecc,stroke:#b85450
+    class A,E term
+    class B,I,S1,S7,K7,R1,R4,N2,N6,N9 io
+    class M,V,S0,R0,P1,P2,P4,P5,P6,K0,K2,K4,K5,K6,N5,N12 proc
+    class C,D,J,S2,S3,S4,S6,S8,S9,S11,K1,K3,K8,K9,K11,R2,R3,R5,N0,N3,N4,N7,N8,N10,P3 dec
+    class S10,K12,R6,N11 ok
+    class X,W,S5,K10,N1 err
 ```
 
 ### Subroutine flow (number printing)
