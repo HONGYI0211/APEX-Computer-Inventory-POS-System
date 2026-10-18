@@ -54,7 +54,7 @@ item_stock  dd 5, 8, 20, 30, 50                     ; modified at run time
 
 s_banner    db 27,"[1;36m",10
             db "  ==========================================",10
-            db "    APEX COMPUTER SHOP  -  POS & INVENTORY",10
+            db "    APEX COMPUTER SHOP  -  POS & INVENTORY SYSTEM",10
             db "  ==========================================",27,"[0m",10,0
 s_pin       db "  Enter staff PIN: ",0
 s_wrong     db 27,"[31m  Wrong PIN.",27,"[0m",10,0
@@ -79,10 +79,11 @@ s_dotsp     db ".  ",0
 s_tab       db "   ",0
 s_nl        db 10,0
 
-s_selitem   db "  Item no. (0 = checkout): ",0
+s_selitem   db "  Item no. (0 = checkout, 6 = back to menu): ",0
 s_qty       db "  Quantity: ",0
 s_added     db 27,"[32m  Added to cart.",27,"[0m",10,0
 s_nostock   db 27,"[31m  Not enough stock for that quantity.",27,"[0m",10,0
+s_back      db "  Back to main menu (cart cleared, stock restored).",10,0
 s_cartfull  db "  Cart is full - proceeding to checkout.",10,0
 
 s_rcpt      db 10,"  ============== RECEIPT ==============",10,0
@@ -211,6 +212,8 @@ do_sale:
     call read_int
     test eax, eax
     jz   .checkout                  ; 0 -> finish cart
+    cmp  eax, 6
+    je   .back                      ; 6 -> abandon cart, return to menu
     cmp  eax, NITEMS
     ja   .bad                       ; also catches -1 (invalid number)
     dec  eax
@@ -239,6 +242,20 @@ do_sale:
 .bad:
     PUTS s_invalid
     jmp  .item
+.back:                              ; give reserved stock back
+    xor  ebx, ebx
+.unreserve:
+    cmp  ebx, [cart_count]
+    jae  .backdone
+    mov  esi, [cart_item+ebx*4]
+    mov  eax, [cart_qty+ebx*4]
+    add  [item_stock+esi*4], eax
+    inc  ebx
+    jmp  .unreserve
+.backdone:
+    mov  dword [cart_count], 0
+    PUTS s_back
+    jmp  menu
 .checkout:
     cmp  dword [cart_count], 0
     je   menu
@@ -632,7 +649,11 @@ read_int:
     jmp  .bad                       ; more than 9 digits
 .end:
     test ecx, ecx
-    jnz  .ret
+    jz   .bad                       ; no digits at all
+    cmp  byte [esi], 10             ; digits must end the line ("5.5", "3x"
+    je   .ret                       ; are rejected)
+    cmp  byte [esi], 13
+    je   .ret
 .bad:
     mov  eax, -1
 .ret:
@@ -668,7 +689,7 @@ read_money:
     jz   .bad
     imul eax, eax, 100              ; ringgit -> cents
     cmp  byte [esi], '.'
-    jne  .ret                       ; no decimal part
+    jne  .chkend                    ; no decimal part
     inc  esi
     xor  ecx, ecx
     xor  edi, edi                   ; sen
@@ -692,7 +713,11 @@ read_money:
     imul edi, edi, 10               ; "5.5" means 50 sen
 .addsen:
     add  eax, edi
-    jmp  .ret
+.chkend:
+    cmp  byte [esi], 10             ; nothing may follow the amount
+    je   .ret
+    cmp  byte [esi], 13
+    je   .ret
 .bad:
     mov  eax, -1
 .ret:
