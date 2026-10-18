@@ -71,12 +71,16 @@ s_menu      db 10,27,"[1m  ---------- MAIN MENU ----------",27,"[0m",10
 s_invalid   db 27,"[31m  Invalid input, try again.",27,"[0m",10,0
 s_bye       db 10,"  Session closed. Goodbye!",10,0
 
-s_invhdr    db 10,"  No. Product      Price         Stock",10
-            db "  --------------------------------------",10,0
+s_invhdr    db 10,"  +-----+--------------+--------------+-------+",10
+            db "  | No. | Product      |        Price | Stock |",10
+s_tsep      db "  +-----+--------------+--------------+-------+",10,0
 s_low       db 27,"[33m  [LOW]",27,"[0m",0
 s_sp2       db "  ",0
-s_dotsp     db ".  ",0
-s_tab       db "   ",0
+s_space     db " ",0
+s_rowa      db "  |  ",0
+s_rowb      db "  | ",0
+s_rowc      db " | ",0
+s_rowend    db " |",0
 s_nl        db 10,0
 
 s_selitem   db "  Item no. (0 = checkout, 6 = back to menu): ",0
@@ -86,19 +90,20 @@ s_nostock   db 27,"[31m  Not enough stock for that quantity.",27,"[0m",10,0
 s_back      db "  Back to main menu (cart cleared, stock restored).",10,0
 s_cartfull  db "  Cart is full - proceeding to checkout.",10,0
 
-s_rcpt      db 10,"  ============== RECEIPT ==============",10,0
+s_rcpt      db 10,"  =================== RECEIPT ====================",10,0
 s_x         db " x ",0
 s_at        db " @ ",0
 s_eq        db " = ",0
-s_subtot    db "  --------------------------------------",10
-            db "  Subtotal          : ",0
-s_disc      db "  Discount (",0
-s_disc2     db "%)      : -",0
-s_tax       db "  Tax (6%)          : ",0
-s_total     db "  TOTAL             : ",0
+s_subtot    db "  ------------------------------------------------",10
+            db "  Subtotal                          : ",0
+s_disc      db "  Less: Discount                    : ",0
+s_pcta      db " (",0
+s_pctb      db "%)",0
+s_tax       db "  Tax (6%)                          : ",0
+s_total     db "  TOTAL                             : ",0
 s_pay       db 10,"  Cash received in RM, e.g. 2861.04 (0 = cancel): ",0
 s_short     db 27,"[31m  Insufficient payment.",27,"[0m",10,0
-s_change    db "  Change            : ",0
+s_change    db "  Change                            : ",0
 s_thanks    db 27,"[32m  Payment complete. Thank you!",27,"[0m",10,0
 s_cancel    db "  Sale cancelled - stock restored.",10,0
 
@@ -108,9 +113,9 @@ s_rsfull    db 27,"[31m  Stock would exceed the limit of 999.",27,"[0m",10,0
 s_rsok      db 27,"[32m  Stock updated.",27,"[0m",10,0
 
 s_rephdr    db 10,"  ============ SALES REPORT ============",10
-            db "  Product      Units sold   Revenue",10
-            db "  --------------------------------------",10,0
-s_rule      db "  --------------------------------------",10,0
+            db "  +--------------+------------+----------------+",10
+            db "  | Product      | Units sold |        Revenue |",10
+s_rsep      db "  +--------------+------------+----------------+",10,0
 s_rtxn      db "  Transactions      : ",0
 s_runits    db "  Units sold        : ",0
 s_rrev      db "  Gross revenue     : ",0
@@ -126,6 +131,7 @@ section .bss
 ; ----------------------------------------------------------------------------
 inbuf       resb 64
 numbuf      resb 12
+moneybuf    resb 20
 cart_item   resd MAXCART            ; product index per cart line
 cart_qty    resd MAXCART            ; quantity per cart line
 cart_count  resd 1
@@ -301,13 +307,13 @@ do_report:
 .row:
     cmp  ebx, NITEMS
     jae  .summary
-    PUTS s_sp2
+    PUTS s_rowb
     mov  eax, ebx
     imul eax, eax, NAMELEN
     lea  ecx, [item_names+eax]
     mov  edx, NAMELEN
     call write_buf
-    PUTS s_tab
+    PUTS s_rowc
     mov  eax, [sold+ebx*4]
     add  ebp, eax
     cmp  eax, [rc_sub]              ; new best seller?
@@ -315,16 +321,19 @@ do_report:
     mov  [rc_sub], eax
     mov  edi, ebx
 .notbest:
-    call print_uint
-    PUTS s_tab
+    mov  ecx, 10
+    call print_uint_w
+    PUTS s_rowc
     mov  eax, [sold+ebx*4]
     mul  dword [item_price+ebx*4]   ; units * price
-    call print_money
+    mov  ecx, 14
+    call print_money_w
+    PUTS s_rowend
     PUTS s_nl
     inc  ebx
     jmp  .row
 .summary:
-    PUTS s_rule
+    PUTS s_rsep
     PUTS s_rtxn
     mov  eax, [txn_count]
     call print_uint
@@ -379,15 +388,18 @@ checkout:
     call write_buf
     PUTS s_x
     mov  eax, edi
-    call print_uint
+    mov  ecx, 3
+    call print_uint_w
     PUTS s_at
     mov  eax, [item_price+esi*4]
-    call print_money
+    mov  ecx, 12
+    call print_money_w
     PUTS s_eq
     mov  eax, [item_price+esi*4]
     mul  edi                        ; line total = price * qty
     add  ebp, eax
-    call print_money
+    mov  ecx, 12
+    call print_money_w
     PUTS s_nl
     inc  ebx
     jmp  .line
@@ -423,22 +435,27 @@ checkout:
 
     PUTS s_subtot
     mov  eax, [rc_sub]
-    call print_money
+    mov  ecx, 12
+    call print_money_w
     PUTS s_nl
     PUTS s_disc
+    mov  eax, [rc_disc]
+    mov  ecx, 12
+    call print_money_w
+    PUTS s_pcta
     mov  eax, [rc_pct]
     call print_uint
-    PUTS s_disc2
-    mov  eax, [rc_disc]
-    call print_money
+    PUTS s_pctb
     PUTS s_nl
     PUTS s_tax
     mov  eax, [rc_tax]
-    call print_money
+    mov  ecx, 12
+    call print_money_w
     PUTS s_nl
     PUTS s_total
     mov  eax, [rc_total]
-    call print_money
+    mov  ecx, 12
+    call print_money_w
     PUTS s_nl
 
 .pay:
@@ -454,7 +471,8 @@ checkout:
     push eax
     PUTS s_change
     pop  eax
-    call print_money
+    mov  ecx, 12
+    call print_money_w
     PUTS s_nl
 
     mov  eax, [rc_total]            ; record the sale
@@ -500,20 +518,24 @@ show_inventory:
 .row:
     cmp  ebx, NITEMS
     jae  .end
-    PUTS s_sp2
+    PUTS s_rowa
     lea  eax, [ebx+1]
     call print_uint
-    PUTS s_dotsp
+    PUTS s_rowb
     mov  eax, ebx
     imul eax, eax, NAMELEN
     lea  ecx, [item_names+eax]
     mov  edx, NAMELEN
     call write_buf
+    PUTS s_rowc
     mov  eax, [item_price+ebx*4]
-    call print_money
-    PUTS s_tab
+    mov  ecx, 12
+    call print_money_w
+    PUTS s_rowc
     mov  eax, [item_stock+ebx*4]
-    call print_uint
+    mov  ecx, 5
+    call print_uint_w
+    PUTS s_rowend
     cmp  eax, LOWSTOCK
     jae  .ok
     PUTS s_low
@@ -522,6 +544,7 @@ show_inventory:
     inc  ebx
     jmp  .row
 .end:
+    PUTS s_tsep
     popa
     ret
 
@@ -586,6 +609,91 @@ print_money:
     PUTS s_zero                     ; leading zero for 0..9 cents
 .two:
     call print_uint
+    popa
+    ret
+
+; ---- print_padded: esi = string, ecx = field width (right-aligned) ---------
+print_padded:
+    pusha
+    xor  edx, edx
+.len:
+    cmp  byte [esi+edx], 0
+    je   .pad
+    inc  edx
+    jmp  .len
+.pad:
+    sub  ecx, edx                   ; spaces needed = width - length
+    jbe  .print
+.sp:
+    PUTS s_space
+    loop .sp
+.print:
+    call print_str
+    popa
+    ret
+
+; ---- print_uint_w: eax = number, ecx = field width -------------------------
+print_uint_w:
+    pusha
+    mov  edi, numbuf+11
+    mov  byte [edi], 0
+    mov  ebx, 10
+.digit:
+    xor  edx, edx
+    div  ebx
+    add  dl, '0'
+    dec  edi
+    mov  [edi], dl
+    test eax, eax
+    jnz  .digit
+    mov  esi, edi
+    call print_padded
+    popa
+    ret
+
+; ---- print_money_w: eax = cents, ecx = field width for "RM d.dd" -----------
+print_money_w:
+    pusha
+    mov  edi, moneybuf
+    mov  byte [edi], 'R'
+    mov  byte [edi+1], 'M'
+    mov  byte [edi+2], ' '
+    add  edi, 3
+    xor  edx, edx
+    mov  ebx, 100
+    div  ebx                        ; eax = ringgit, edx = sen
+    push edx
+    mov  esi, numbuf+11             ; ringgit digits, built backwards
+    mov  ebx, 10
+.digit:
+    xor  edx, edx
+    div  ebx
+    add  dl, '0'
+    dec  esi
+    mov  [esi], dl
+    test eax, eax
+    jnz  .digit
+.copy:
+    cmp  esi, numbuf+11
+    jae  .sen
+    mov  al, [esi]
+    mov  [edi], al
+    inc  esi
+    inc  edi
+    jmp  .copy
+.sen:
+    mov  byte [edi], '.'
+    pop  eax
+    xor  edx, edx
+    mov  ebx, 10
+    div  ebx                        ; eax = tens of sen, edx = units
+    add  al, '0'
+    add  dl, '0'
+    mov  [edi+1], al
+    mov  [edi+2], dl
+    mov  byte [edi+3], 0
+    mov  esi, moneybuf
+    call print_padded
     popa
     ret
 
