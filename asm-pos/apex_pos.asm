@@ -33,10 +33,10 @@ MAXPRICE equ 9999999    ; highest price for a new product (RM 99999.99)
 CARTLIMIT equ 40000000  ; highest value of one sale in cents (RM 400000.00)
 TAXRATE  equ 6          ; sales tax, percent
 
-; Linux i386 system call numbers
-SYS_EXIT  equ 1
-SYS_READ  equ 3
-SYS_WRITE equ 4
+; Linux i386 system call numbers, give names to the numbers of the Linux system calls the program uses.
+SYS_EXIT  equ 1 ; -> end the program
+SYS_READ  equ 3 ; -> read from the keyboard
+SYS_WRITE equ 4 ; -> print to the screen
 
 ; ---- macros (text replaced by NASM before assembling) ---------------------
 %macro NAME 1                       ; product name padded to NAMELEN bytes
