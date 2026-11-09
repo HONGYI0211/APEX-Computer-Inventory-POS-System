@@ -6,3 +6,6 @@ settings.local.json
 *.o
 *.lst
 apex_pos
+
+# Documentation
+docs/
